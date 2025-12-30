@@ -54,10 +54,15 @@ app.post('/webhook/dingtalk', async (req, res) => {
       // 注意: atUserIds 为空数组时，可能是群消息但没有@任何人
       // 如果钉钉机器人设置了"@才能触发"，这里会有机器人ID
       
-      // 这里我们简化处理：只要收到消息就触发部署
-      // 你可以根据实际需求添加更多判断条件，比如检查消息内容包含特定关键字
+      // 只有消息内容包含 "deploy" 关键字时才触发部署（不区分大小写）
+      const hasDeployKeyword = content.toLowerCase().includes('deploy');
       
-      logger.info(`触发部署流程 (触发人: ${senderNick})`);
+      if (!hasDeployKeyword) {
+        logger.info(`消息不包含 "deploy" 关键字，跳过部署`);
+        return;
+      }
+      
+      logger.info(`检测到 "deploy" 关键字，触发部署流程 (触发人: ${senderNick})`);
       
       // 异步执行部署，不阻塞响应
       deploy(senderNick).catch(error => {
