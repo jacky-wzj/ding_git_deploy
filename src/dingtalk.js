@@ -22,6 +22,41 @@ function verifySignature(timestamp, sign) {
 }
 
 /**
+ * 生成钉钉签名（用于发送消息）
+ * @param {string} timestamp - 时间戳（毫秒）
+ * @returns {string} 签名
+ */
+function generateSignature(timestamp) {
+  if (!config.dingtalk.secret) {
+    return '';
+  }
+
+  const stringToSign = `${timestamp}\n${config.dingtalk.secret}`;
+  const hmac = crypto.createHmac('sha256', config.dingtalk.secret);
+  const sign = hmac.update(stringToSign).digest('base64');
+  
+  return encodeURIComponent(sign);
+}
+
+/**
+ * 构建带签名的 Webhook URL
+ * @param {string} webhook - 原始 Webhook URL
+ * @returns {string} 带签名的 URL
+ */
+function buildSignedWebhookUrl(webhook) {
+  if (!config.dingtalk.secret) {
+    return webhook;
+  }
+
+  const timestamp = Date.now().toString();
+  const sign = generateSignature(timestamp);
+  
+  // 检查 URL 是否已经包含参数
+  const separator = webhook.includes('?') ? '&' : '?';
+  return `${webhook}${separator}timestamp=${timestamp}&sign=${sign}`;
+}
+
+/**
  * 发送文本消息到钉钉群
  * @param {string} content - 消息内容
  * @param {Array<string>} atMobiles - @的手机号列表
@@ -45,7 +80,10 @@ async function sendTextMessage(content, atMobiles = [], isAtAll = false) {
   };
 
   try {
-    const response = await fetch(config.dingtalk.webhook, {
+    // 构建带签名的 Webhook URL
+    const signedWebhook = buildSignedWebhookUrl(config.dingtalk.webhook);
+    
+    const response = await fetch(signedWebhook, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -91,7 +129,10 @@ async function sendMarkdownMessage(title, text, atMobiles = [], isAtAll = false)
   };
 
   try {
-    const response = await fetch(config.dingtalk.webhook, {
+    // 构建带签名的 Webhook URL
+    const signedWebhook = buildSignedWebhookUrl(config.dingtalk.webhook);
+    
+    const response = await fetch(signedWebhook, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
