@@ -1,7 +1,7 @@
 const express = require('express');
 const config = require('./config');
 const logger = require('./utils/logger');
-const { verifySignature } = require('./dingtalk');
+const { verifySignature, sendTextMessage } = require('./dingtalk');
 const { deploy } = require('./deploy');
 
 const app = express();
@@ -47,6 +47,8 @@ app.post('/webhook/dingtalk', async (req, res) => {
       const atUserIds = body.text?.atUserIds || [];
       const content = body.text?.content || '';
       const senderNick = body.senderNick || '未知用户';
+      const senderStaffId = body.senderStaffId || '';
+      const senderId = body.senderId || '';
       
       logger.info(`收到消息: ${content} (发送人: ${senderNick})`);
       
@@ -59,6 +61,17 @@ app.post('/webhook/dingtalk', async (req, res) => {
       
       if (!hasDeployKeyword) {
         logger.info(`消息不包含 "deploy" 关键字，跳过部署`);
+        
+        // 发送提示消息给用户
+        const replyMessage = `❌ 消息未包含 "deploy" 关键字，无法触发部署。\n\n请发送包含 "deploy" 的消息来触发部署流程。`;
+        
+        // 尝试获取发送者的手机号（用于@用户）
+        const atMobiles = body.senderMobile ? [body.senderMobile] : [];
+        
+        sendTextMessage(replyMessage, atMobiles, false).catch(error => {
+          logger.error(`发送提示消息失败: ${error.message}`);
+        });
+        
         return;
       }
       
