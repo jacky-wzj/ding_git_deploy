@@ -89,22 +89,25 @@ app.post('/webhook/dingtalk', async (req, res) => {
   }
 });
 
-// 手动触发部署接口（用于测试）
-app.post('/deploy', async (req, res) => {
+// GET 方式触发部署接口
+app.get('/deploy', async (req, res) => {
   try {
-    logger.info('收到手动部署请求');
+    const triggerName = req.query.name || req.query.user || 'GET请求触发';
+    logger.info(`收到 GET 部署请求 (触发人: ${triggerName})`);
     
-    // 异步执行部署
-    deploy('手动触发').catch(error => {
+    // 异步执行部署，不阻塞响应
+    deploy(triggerName).catch(error => {
       logger.error(`部署流程异常: ${error.message}`);
     });
     
     res.json({ 
       success: true, 
-      message: '部署已开始，请在钉钉群查看进度' 
+      message: '部署已开始，请在钉钉群查看进度',
+      triggerName: triggerName,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error(`手动部署异常: ${error.message}`);
+    logger.error(`GET 部署异常: ${error.message}`);
     res.status(500).json({ 
       success: false, 
       error: error.message 
