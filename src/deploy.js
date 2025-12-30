@@ -58,6 +58,80 @@ function formatDuration(ms) {
 }
 
 /**
+ * 获取当前 Git 分支名
+ * @param {string} cwd - 工作目录
+ * @returns {Promise<string>} 分支名
+ */
+async function getCurrentBranch(cwd) {
+  try {
+    const { stdout } = await execPromise('git rev-parse --abbrev-ref HEAD', { cwd });
+    return stdout.trim();
+  } catch (error) {
+    logger.warn(`获取当前分支失败: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * 检查远程分支是否存在
+ * @param {string} branch - 分支名
+ * @param {string} cwd - 工作目录
+ * @returns {Promise<boolean>}
+ */
+async function checkRemoteBranchExists(branch, cwd) {
+  try {
+    // 先 fetch 更新远程分支信息
+    await execPromise('git fetch origin', { cwd, timeout: 30000 });
+    
+    // 检查远程分支是否存在
+    const { stdout } = await execPromise(`git ls-remote --heads origin ${branch}`, { cwd });
+    return stdout.trim().length > 0;
+  } catch (error) {
+    logger.warn(`检查远程分支失败: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * 智能 Git Pull
+ * @param {string} branch - 目标分支
+ * @param {string} cwd - 工作目录
+ * @returns {Promise<{stdout: string, stderr: string, success: boolean, actualBranch: string}>}
+ */
+async function smartGitPull(branch, cwd) {
+  let actualBranch = branch;
+  
+  // 先检查远程分支是否存在
+  const remoteBranchExists = await checkRemoteBranchExists(branch, cwd);
+  
+  if (!remoteBranchExists) {
+    // 如果远程分支不存在，尝试使用当前分支
+    const currentBranch = await getCurrentBranch(cwd);
+    if (currentBranch && currentBranch !== branch) {
+      logger.warn(`远程分支 ${branch} 不存在，使用当前分支 ${currentBranch}`);
+      actualBranch = currentBranch;
+    } else {
+      // 尝试常见分支名
+      const commonBranches = ['master', 'develop', 'dev'];
+      for (const commonBranch of commonBranches) {
+        if (await checkRemoteBranchExists(commonBranch, cwd)) {
+          logger.warn(`远程分支 ${branch} 不存在，使用分支 ${commonBranch}`);
+          actualBranch = commonBranch;
+          break;
+        }
+      }
+    }
+  }
+  
+  // 执行 git pull
+  const result = await executeCommand(`git pull origin ${actualBranch}`, cwd);
+  return {
+    ...result,
+    actualBranch
+  };
+}
+
+/**
  * 执行部署流程
  * @param {string} senderName - 触发部署的用户名
  */
@@ -82,17 +156,22 @@ async function deploy(senderName = '未知用户') {
 
   const results = [];
   let hasError = false;
+  let actualBranch = gitBranch;
 
   // 步骤1: Git Pull
   logger.info('步骤 1/4: 拉取最新代码');
-  const gitResult = await executeCommand(
-    config.commands.gitPull(gitBranch),
-    projectPath
-  );
+  const gitResult = await smartGitPull(gitBranch, projectPath);
+  
+  // 如果使用了不同的分支，更新实际使用的分支名
+  if (gitResult.actualBranch && gitResult.actualBranch !== gitBranch) {
+    actualBranch = gitResult.actualBranch;
+    logger.info(`实际使用的分支: ${actualBranch}`);
+  }
+  
   results.push({
     step: 1,
     name: '拉取代码',
-    command: config.commands.gitPull(gitBranch),
+    command: `git pull origin ${actualBranch}`,
     ...gitResult
   });
   
@@ -165,6 +244,9 @@ async function deploy(senderName = '未知用户') {
   // 构建结果消息
   let resultMessage = hasError ? '### ❌ 部署失败\n\n' : '### ✅ 部署成功\n\n';
   resultMessage += `**触发人**: ${senderName}\n\n`;
+  resultMessage += `**时间**: ${new Date().toLocaleString('zh-CN')}\n\n`;
+  resultMessage += `**项目路径**: ${projectPath}\n\n`;
+  resultMessage += `**分支**: ${actualBranch}${actualBranch !== gitBranch ? ` (配置: ${gitBranch})` : ''}\n\n`;
   resultMessage += `**耗时**: ${formatDuration(duration)}\n\n`;
   resultMessage += `---\n\n`;
   resultMessage += `#### 执行详情\n\n`;
