@@ -73,21 +73,18 @@ async function getCurrentBranch(cwd) {
 }
 
 /**
- * 检查远程分支是否存在
+ * 检查远程分支是否存在（不执行 fetch，由调用者负责）
  * @param {string} branch - 分支名
  * @param {string} cwd - 工作目录
  * @returns {Promise<boolean>}
  */
 async function checkRemoteBranchExists(branch, cwd) {
   try {
-    // 先 fetch 更新远程分支信息
-    await execPromise('git fetch origin', { cwd, timeout: 30000 });
-    
-    // 检查远程分支是否存在
-    const { stdout } = await execPromise(`git ls-remote --heads origin ${branch}`, { cwd });
+    // 检查远程分支是否存在（使用 ls-remote，不需要 fetch）
+    const { stdout } = await execPromise(`git ls-remote --heads origin ${branch}`, { cwd, timeout: 10000 });
     return stdout.trim().length > 0;
   } catch (error) {
-    logger.warn(`检查远程分支失败: ${error.message}`);
+    logger.warn(`检查远程分支 ${branch} 失败: ${error.message}`);
     return false;
   }
 }
@@ -101,29 +98,49 @@ async function checkRemoteBranchExists(branch, cwd) {
 async function smartGitPull(branch, cwd) {
   let actualBranch = branch;
   
-  // 先检查远程分支是否存在
+  // 先 fetch 更新远程分支信息
+  try {
+    await execPromise('git fetch origin', { cwd, timeout: 30000 });
+  } catch (error) {
+    logger.warn(`Git fetch 失败: ${error.message}，继续尝试 pull`);
+  }
+  
+  // 先检查配置的分支是否存在
   const remoteBranchExists = await checkRemoteBranchExists(branch, cwd);
   
   if (!remoteBranchExists) {
-    // 如果远程分支不存在，尝试使用当前分支
-    const currentBranch = await getCurrentBranch(cwd);
-    if (currentBranch && currentBranch !== branch) {
-      logger.warn(`远程分支 ${branch} 不存在，使用当前分支 ${currentBranch}`);
-      actualBranch = currentBranch;
-    } else {
-      // 尝试常见分支名
-      const commonBranches = ['master', 'develop', 'dev'];
-      for (const commonBranch of commonBranches) {
-        if (await checkRemoteBranchExists(commonBranch, cwd)) {
-          logger.warn(`远程分支 ${branch} 不存在，使用分支 ${commonBranch}`);
-          actualBranch = commonBranch;
-          break;
+    logger.warn(`远程分支 ${branch} 不存在，尝试查找其他分支`);
+    
+    // 如果配置的不是 main，先尝试 main 分支
+    if (branch !== 'main') {
+      if (await checkRemoteBranchExists('main', cwd)) {
+        logger.info(`使用 main 分支替代配置的分支 ${branch}`);
+        actualBranch = 'main';
+      }
+    }
+    
+    // 如果 main 也不存在，尝试使用当前分支
+    if (actualBranch === branch) {
+      const currentBranch = await getCurrentBranch(cwd);
+      if (currentBranch && currentBranch !== branch) {
+        logger.warn(`使用当前分支 ${currentBranch}`);
+        actualBranch = currentBranch;
+      } else {
+        // 尝试其他常见分支名（排除 main，因为已经尝试过了）
+        const commonBranches = ['master', 'develop', 'dev'];
+        for (const commonBranch of commonBranches) {
+          if (await checkRemoteBranchExists(commonBranch, cwd)) {
+            logger.warn(`使用分支 ${commonBranch}`);
+            actualBranch = commonBranch;
+            break;
+          }
         }
       }
     }
   }
   
   // 执行 git pull
+  logger.info(`执行 git pull origin ${actualBranch}`);
   const result = await executeCommand(`git pull origin ${actualBranch}`, cwd);
   return {
     ...result,
